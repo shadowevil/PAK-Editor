@@ -229,6 +229,11 @@ namespace PAK_Editor
                         cm.MenuItems.Add(addRect);
                         addRect.Click += (send, EventArg) => { addRectangle_Click(send, SpriteIndex, e.Node.Nodes.Count - 1); };
                     }
+                    {   // Replace PNG
+                        MenuItem replacePNG = new MenuItem("Replace PNG");
+                        cm.MenuItems.Add(replacePNG);
+                        replacePNG.Click += (send, EventArgs) => { replaceSprite_Click(send, SpriteIndex); };
+                    }
                     {   // Save PNG
                         MenuItem savePNG = new MenuItem("Save PNG");
                         cm.MenuItems.Add(savePNG);
@@ -250,6 +255,25 @@ namespace PAK_Editor
 
                 }
                 SpriteList.ContextMenu = cm;
+            }
+        }
+
+        private void replaceSprite_Click(object send, int spriteIndex)
+        {
+            OpenFileDialog ofdlg = new OpenFileDialog();
+            ofdlg.Filter = ".PNG Files (*.png)|*.png";
+
+            if (ofdlg.ShowDialog() == DialogResult.OK)
+            {
+                Sprite spr = SpriteArray[spriteIndex];
+                byte[] newFileBytes = File.ReadAllBytes(ofdlg.FileName);
+                spr.ImageBytes = newFileBytes;
+                SpriteArray[spriteIndex] = spr;
+                using (MemoryStream ms = new MemoryStream(newFileBytes))
+                {
+                    SelectedSprite = Image.FromStream(ms);
+                }
+                PictureView.Refresh();
             }
         }
 
