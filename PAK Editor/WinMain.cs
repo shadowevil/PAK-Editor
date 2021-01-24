@@ -7,6 +7,9 @@ using System.Windows.Forms;
 using System.Drawing;
 using System.IO;
 using System.Windows.Input;
+using System.Runtime.InteropServices;
+using System.Drawing.Imaging;
+using System.Reflection;
 
 namespace PAK_Editor
 {
@@ -15,6 +18,7 @@ namespace PAK_Editor
         private ToolStrip toolBox;
         private ToolStripDropDownButton file;
         private Panel PictureView;
+        private Panel AnimationView;
         private Panel RectangleDataView;
         private TextBox RectangleDataBox;
         private Image SelectedSprite;
@@ -22,7 +26,18 @@ namespace PAK_Editor
         private int SelectedParentNode = 0;
         private Rectangle[] _sprRectangles;
 
+        private DateTime totalAnimationTime;
+        private Timer animationRefreshRate;
+        private List<SpriteAnimation> spriteAnimations;
+
         private TreeView SpriteList;
+
+        private struct SpriteAnimation
+        {
+            public Bitmap bmp;
+            public Rectangle bounds;
+            public int offset;
+        };
 
         private struct Sprite
         {
@@ -35,6 +50,7 @@ namespace PAK_Editor
         {
             public int Index;
             public Rectangle spriteRect;
+            public int xOffset;
         };
 
         private List<Sprite> SpriteArray;
@@ -51,6 +67,7 @@ namespace PAK_Editor
             this.StartPosition = FormStartPosition.CenterScreen;
             this.SizeChanged += WinMain_SizeChanged;
             this.Text = "PAK Editor";
+            this.Icon = PAK_Editor.Properties.Resources.Icon;
         }
 
         private void WinMain_SizeChanged(object sender, EventArgs e)
@@ -61,6 +78,10 @@ namespace PAK_Editor
 
         private void InitFormComponents()
         {
+            totalAnimationTime = DateTime.Now;
+            animationRefreshRate = new Timer();
+            animationRefreshRate.Interval = 16;
+            animationRefreshRate.Tick += AnimationRefreshRate_Tick;
             SpriteArray = new List<Sprite>();
 
             PictureView = new Panel();
@@ -69,6 +90,7 @@ namespace PAK_Editor
                 PictureView.Dock = DockStyle.Left;
                 PictureView.BorderStyle = BorderStyle.FixedSingle;
                 PictureView.Width = this.Width - 266;
+                PictureView.Name = "PictureView";
                 PictureView.Paint += PictureView_Paint;
                 PictureView.MouseClick += PictureView_MouseClick;
             }
@@ -124,6 +146,31 @@ namespace PAK_Editor
             }
             RectangleDataView.Controls.Add(RectangleDataBox);
 
+            RectangleDataBox = new TextBox();
+            {
+                RectangleDataBox.Width = 100;
+                RectangleDataBox.Location = new Point(500, 25);
+                RectangleDataBox.Enabled = false;
+                RectangleDataBox.Name = "txtBox_xOffset";
+                RectangleDataBox.KeyPress += RectangleDataBox_KeyPress;
+            }
+            RectangleDataView.Controls.Add(RectangleDataBox);
+
+            AnimationView = new Panel();
+            {
+                AnimationView.BackColor = Color.FromArgb(200, 200, 200);
+                AnimationView.BorderStyle = BorderStyle.FixedSingle;
+                AnimationView.Width = 200;
+                AnimationView.Height = 200;
+                AnimationView.Visible = false;
+                AnimationView.Paint += AnimationView_Paint;
+                typeof(Panel).InvokeMember("DoubleBuffered", BindingFlags.SetProperty
+                            | BindingFlags.Instance | BindingFlags.NonPublic, null,
+                            AnimationView, new object[] { true });
+            }
+            PictureView.Controls.Add(AnimationView);
+
+
             SpriteList = new TreeView();
             {
                 SpriteList.BackColor = Color.FromArgb(225, 225, 225);
@@ -132,6 +179,20 @@ namespace PAK_Editor
                 SpriteList.AfterSelect += SpriteList_AfterSelect;
                 SpriteList.NodeMouseClick += SpriteList_NodeMouseClick;
                 SpriteList.Scrollable = true;
+                SpriteList.HideSelection = false;
+                SpriteList.DrawMode = TreeViewDrawMode.OwnerDrawText;
+                SpriteList.DrawNode += (object sender, DrawTreeNodeEventArgs e) =>
+                {
+                    e.DrawDefault = true;
+                    if (e.Node.IsSelected)
+                    {
+                        e.Node.ForeColor = Color.White;
+                    }
+                    else
+                    {
+                        e.Node.ForeColor = Color.Black;
+                    }
+                };
             }
             this.Controls.Add(SpriteList);
 
@@ -143,7 +204,7 @@ namespace PAK_Editor
 
                 file = new ToolStripDropDownButton("File");
                 file.DropDownItems.Add("New", null, fileNew_Click);
-                file.DropDownItems.Add("Open", null, fileOpen_Click);
+                file.DropDownItems.Add("Open", null, (send, EventArgs) => { fileOpen_Click(send, EventArgs); });
                 file.DropDownItems.Add(new ToolStripSeparator());
                 ToolStripItem add = new ToolStripMenuItem();
                 add.Enabled = false;
@@ -164,6 +225,43 @@ namespace PAK_Editor
             this.Controls.Add(toolBox);
         }
 
+        DateTime aniTime;
+        int frame = 0;
+
+        private void AnimationRefreshRate_Tick(object sender, EventArgs e)
+        {
+            totalAnimationTime = DateTime.Now;
+            if (aniTime.Date == new DateTime())
+                aniTime = totalAnimationTime;
+
+            if ((totalAnimationTime - aniTime).TotalMilliseconds >= 300)
+            {
+                frame++;
+                if (frame >= spriteAnimations.Count) frame = 0;
+                aniTime = DateTime.Now;
+            }
+            AnimationView.Invalidate();
+        }
+
+        private void AnimationView_Paint(object sender, PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            e.Graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
+            if (frame > spriteAnimations.Count - 1) return;
+            Bitmap bmp = spriteAnimations[frame].bmp;
+            if (bmp == null) return;
+            int offset = spriteAnimations[frame].offset;
+            int bmpWidth = Convert.ToInt32(bmp.Width);
+            int bmpHeight = Convert.ToInt32(bmp.Height);
+            int x = ((sender as Panel).Width / 2) - (bmpWidth / 2);
+            int y = ((sender as Panel).Height / 2) - (bmpHeight / 2);
+
+            e.Graphics.DrawImage(bmp, new Rectangle(x + offset, y, bmpWidth, bmpHeight), new Rectangle(0, 0, bmp.Width, bmp.Height), GraphicsUnit.Pixel);
+            //e.Graphics.DrawRectangle(Pens.Red, x + offset, y, spriteAnimations[frame].bounds.Width, spriteAnimations[frame].bounds.Height);
+            e.Graphics.DrawString("Frame: " + frame.ToString(), new Font("Century Gothic", 10.0f), Brushes.Black, 5, 5);
+            e.Graphics.DrawString("Offset: " + offset.ToString(), new Font("Century Gothic", 10.0f), Brushes.Black, 5, 20);
+        }
+
         private void RectangleDataBox_KeyPress(object sender, KeyPressEventArgs e)
         {
             if (e.KeyChar == (char)Keys.Enter)
@@ -177,6 +275,23 @@ namespace PAK_Editor
                 };
                 SpriteRectangles sprR = SpriteArray[SelectedParentNode].spriteRects[SelectedRect];
                 sprR.spriteRect = rect;
+                sprR.xOffset = Convert.ToInt32((sender as TextBox).Parent.Controls["txtBox_xOffset"].Text);
+
+                if (sprR.Index > spriteAnimations.Count - 1)
+                {
+                    SpriteAnimation spA = new SpriteAnimation();
+                    spA.bounds = rect;
+                    spA.offset = sprR.xOffset;
+                    spriteAnimations.Add(spA);
+                }
+                else
+                {
+                    SpriteAnimation spA = spriteAnimations[sprR.Index];
+                    spA.bounds = rect;
+                    spA.offset = sprR.xOffset;
+                    spriteAnimations[sprR.Index] = spA;
+                }
+
                 SpriteArray[SelectedParentNode].spriteRects[SelectedRect] = sprR;
                 List<Rectangle> _rect = new List<Rectangle>();
                 foreach (SpriteRectangles s in SpriteArray[SelectedParentNode].spriteRects)
@@ -244,6 +359,11 @@ namespace PAK_Editor
                         cm.MenuItems.Add(deleteSprite);
                         deleteSprite.Click += (send, EventArgs) => { deleteSprite_Click(send, SpriteIndex); };
                     }
+                    {   // Show Animation
+                        MenuItem showAnimation = new MenuItem("Show Animation");
+                        cm.MenuItems.Add(showAnimation);
+                        showAnimation.Click += (send, EventArgs) => { showAnimation_Click(send, EventArgs); };
+                    }
                 }
                 else
                 {
@@ -256,6 +376,13 @@ namespace PAK_Editor
                 }
                 SpriteList.ContextMenu = cm;
             }
+        }
+
+        private void showAnimation_Click(object send, EventArgs eventArgs)
+        {
+            AnimationView.Visible = !AnimationView.Visible;
+            if (AnimationView.Visible) animationRefreshRate.Start();
+            else animationRefreshRate.Stop();
         }
 
         private void replaceSprite_Click(object send, int spriteIndex)
@@ -346,6 +473,7 @@ namespace PAK_Editor
             g.DrawString("Y:", new Font("Century Gothic", 9.0f, FontStyle.Bold), Brushes.Black, new Point(50, 76));
             g.DrawString("Width:", new Font("Century Gothic", 9.0f, FontStyle.Bold), Brushes.Black, new Point(250, 26));
             g.DrawString("Height:", new Font("Century Gothic", 9.0f, FontStyle.Bold), Brushes.Black, new Point(250, 76));
+            g.DrawString("Offset X:", new Font("Century Gothic", 9.0f, FontStyle.Bold), Brushes.Black, new Point(435, 26));
         }
 
         private void fileSaveAs_Click(object sender, EventArgs e)
@@ -357,15 +485,11 @@ namespace PAK_Editor
             {
                 string SpriteData = String.Empty;
                 ImageBytes = _spr.ImageBytes;
-                List<Rectangle> ImageRectangles = new List<Rectangle>();
-                foreach (SpriteRectangles sr in _spr.spriteRects)
+                
+                foreach (SpriteRectangles r in _spr.spriteRects)
                 {
-                    ImageRectangles.Add(sr.spriteRect);
-                }
-
-                foreach (Rectangle r in ImageRectangles)
-                {
-                    SpriteData += r.X + "|" + r.Y + "|" + r.Width + "|" + r.Height + "~";
+                    SpriteData += r.spriteRect.X + "|" + r.spriteRect.Y + "|" +
+                        r.spriteRect.Width + "|" + r.spriteRect.Height + "|" + r.xOffset + "~";
                 }
 
                 SpriteData += ImageBytes.Length + "~";
@@ -421,6 +545,9 @@ namespace PAK_Editor
 
             if (_sprRectangles == null) return;
 
+            if(SelectedRect >= 0)
+                SetRectangleTextBox("txtBox_xOffset", SpriteArray[SelectedParentNode].spriteRects[SelectedRect].xOffset.ToString());
+
             foreach (Rectangle r in _sprRectangles)
             {
                 Color color = Color.Yellow;
@@ -435,7 +562,7 @@ namespace PAK_Editor
                         SetRectangleTextBox("txtBox_H", r.Height.ToString());
                     }
                 }
-                Pen pen = new Pen(color, 2);
+                Pen pen = new Pen(color, 1);
                 pen.Alignment = System.Drawing.Drawing2D.PenAlignment.Outset;
                 e.Graphics.DrawRectangle(pen, new Rectangle(r.X + (int)x, r.Y + (int)y, r.Width, r.Height));
             }
@@ -486,10 +613,34 @@ namespace PAK_Editor
                 (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_Y"].Enabled = false;
                 (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_W"].Enabled = false;
                 (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_H"].Enabled = false;
+                (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_xOffset"].Enabled = false;
                 ((sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_X"] as TextBox).Text = "";
                 ((sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_Y"] as TextBox).Text = "";
                 ((sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_W"] as TextBox).Text = img.Width.ToString();
                 ((sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_H"] as TextBox).Text = img.Height.ToString();
+                ((sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_xOffset"] as TextBox).Text = "";
+
+                if (e.Node.Parent == null)
+                {
+                    if (SpriteList.Nodes[e.Node.Index].GetNodeCount(true) > 0)
+                    {
+                        spriteAnimations = new List<SpriteAnimation>();
+                        foreach (SpriteRectangles sr in SpriteArray[e.Node.Index].spriteRects)
+                        {
+                            spriteAnimations.Add(new SpriteAnimation
+                            {
+                                bmp = CropBitmapSource(bmp, sr.spriteRect),
+                                bounds = sr.spriteRect,
+                                offset = sr.xOffset
+                            });
+                        }
+                    }
+                    else
+                    {
+                        AnimationView.Visible = false;
+                        animationRefreshRate.Stop();
+                    }
+                }
                 SelectedRect = -1;
             }
             else
@@ -500,6 +651,7 @@ namespace PAK_Editor
                 (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_Y"].Enabled = true;
                 (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_W"].Enabled = true;
                 (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_H"].Enabled = true;
+                (sender as TreeView).Parent.Controls["RectangleDataView"].Controls["txtBox_xOffset"].Enabled = true;
                 _spr = SpriteArray.Find(iX => iX.Index == e.Node.Parent.Index);
                 if (_spr.ImageBytes == null) return;
                 Bitmap bmp = new Bitmap(new MemoryStream(_spr.ImageBytes));
@@ -514,6 +666,25 @@ namespace PAK_Editor
             _sprRectangles = _rects.ToArray();
             SelectedSprite = img;
             PictureView.Refresh();
+        }
+
+        public static byte[] GetBitmapMemoryStream(Bitmap bmp)
+        {
+            using (MemoryStream mS = new MemoryStream())
+            {
+                bmp.Save(mS, ImageFormat.Png);
+                return mS.ToArray();
+            }
+        }
+
+        private static Bitmap CropBitmapSource(Bitmap bmp, Rectangle srcRectangle)
+        {
+            if (srcRectangle.Width <= 0 && srcRectangle.Height <= 0) return null;
+            Rectangle r = srcRectangle;
+            FastImageCroper fic = new FastImageCroper(bmp);
+            Bitmap _bmp = fic.Crop(r);
+            fic.Dispose();
+            return _bmp;
         }
 
         private void fileNew_Click(object sender, EventArgs e)
@@ -541,20 +712,35 @@ namespace PAK_Editor
             PictureView.Refresh();
         }
 
-        private void fileOpen_Click(object sender, EventArgs e)
+        public void fileOpen_Click(object sender, EventArgs e, string openFile = null)
         {
-            OpenFileDialog oFD = new OpenFileDialog();
-            oFD.Filter = ".PAK Data Files (*.pak)|*.pak";
-            int dataLength = 0;
-            int imageSize = 0;
-            if (oFD.ShowDialog() == DialogResult.OK)
+            bool Continue = false;
+            if (openFile == null)
+            {
+                OpenFileDialog oFD = new OpenFileDialog();
+                oFD.Filter = ".PAK Data Files (*.pak)|*.pak";
+
+                if (oFD.ShowDialog() == DialogResult.OK)
+                {
+                    Continue = true;
+                    openFile = oFD.FileName;
+                }
+            }
+            else
+            {
+                Continue = true;
+            }
+
+            if (Continue)
             {
                 ClearTable();
                 ToggleMenuItem(3, true);
                 ToggleMenuItem(4, true);
-                using (MemoryStream mS = new MemoryStream(DecryptPAKFile(File.ReadAllBytes(oFD.FileName))))
+                using (MemoryStream mS = new MemoryStream(DecryptPAKFile(File.ReadAllBytes(openFile))))
                 //using (MemoryStream mS = new MemoryStream(File.ReadAllBytes(oFD.FileName)))
                 {
+                    int dataLength = 0;
+                    int imageSize = 0;
                     int currentRead = 0;
                     while (mS.Position < mS.Length)
                     {
@@ -576,6 +762,7 @@ namespace PAK_Editor
                         // Get rectangle data
                         string rectBuff = _str.Substring(0, _str.IndexOf('?'));
                         List<Rectangle> rects = new List<Rectangle>();
+                        List<int> xOffset = new List<int>();
                         for (int i = 0; i < rectBuff.Split('~').Length - 2; i++)
                         {
                             string _s = rectBuff.Split('~')[i];
@@ -586,6 +773,8 @@ namespace PAK_Editor
                             }
                             int[] rectData = _i.ToArray();
                             rects.Add(new Rectangle(rectData[0], rectData[1], rectData[2], rectData[3]));
+                            if (rectData.Length <= 4) xOffset.Add(0);
+                            else xOffset.Add(rectData[4]);  // Should be xoffset if saved properly
                         }
 
                         // Get Image bytes
@@ -609,6 +798,12 @@ namespace PAK_Editor
                             _sprRects.spriteRect = r;
                             _spr.spriteRects.Add(_sprRects);
                             SpriteList.Nodes[SpriteList.GetNodeCount(false) - 1].Nodes.Add(SpriteList.Nodes[SpriteList.GetNodeCount(false) - 1].GetNodeCount(false).ToString());
+                        }
+                        for (int i = 0; i < _spr.spriteRects.Count; i++)
+                        {
+                            SpriteRectangles _sprRects = _spr.spriteRects[i];
+                            _sprRects.xOffset = xOffset[i];
+                            _spr.spriteRects[i] = _sprRects;
                         }
 
                         SpriteArray.Add(_spr);
@@ -637,5 +832,49 @@ namespace PAK_Editor
             SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
             UpdateStyles();
         }
+    }
+
+    internal unsafe sealed class FastImageCroper : IDisposable
+    {
+        private readonly Bitmap _srcImg;
+        private readonly BitmapData _srcImgBitmapData;
+        private readonly int _bpp;
+        private readonly byte* _srtPrt;
+
+        public FastImageCroper(Bitmap srcImg)
+        {
+            _srcImg = srcImg;
+            _srcImgBitmapData = srcImg.LockBits(new Rectangle(0, 0, srcImg.Width, srcImg.Height), ImageLockMode.ReadOnly, srcImg.PixelFormat);
+            _bpp = _srcImgBitmapData.Stride / _srcImgBitmapData.Width; // == 4
+            _srtPrt = (byte*)_srcImgBitmapData.Scan0.ToPointer();
+        }
+
+        public Bitmap Crop(Rectangle rectangle)
+        {
+            Bitmap dstImg = new Bitmap(rectangle.Width, rectangle.Height, _srcImg.PixelFormat);
+            BitmapData dstImgBitmapData = dstImg.LockBits(new Rectangle(0, 0, dstImg.Width, dstImg.Height), ImageLockMode.WriteOnly, dstImg.PixelFormat);
+            byte* dstPrt = (byte*)dstImgBitmapData.Scan0.ToPointer();
+            byte* srcPrt = _srtPrt + rectangle.Y * _srcImgBitmapData.Stride + rectangle.X * _bpp;
+
+            for (int y = 0; y < rectangle.Height; y++)
+            {
+                int srcIndex = y * _srcImgBitmapData.Stride;
+                int croppedIndex = y * dstImgBitmapData.Stride;
+                memcpy(dstPrt + croppedIndex, srcPrt + srcIndex, dstImgBitmapData.Stride);
+            }
+
+            dstImg.UnlockBits(dstImgBitmapData);
+            return dstImg;
+        }
+
+
+        public void Dispose()
+        {
+            _srcImg.UnlockBits(_srcImgBitmapData);
+        }
+
+
+        [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int memcpy(byte* dest, byte* src, long count);
     }
 }
